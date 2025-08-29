@@ -125,6 +125,7 @@ module MQ
     def stop
       if @mq_consumer_thread&.alive?
         @mq_consumer_thread.join
+        @mq_consumer_thread.kill
       end
       @mq_consumer_thread = nil
 
@@ -133,46 +134,49 @@ module MQ
 
     private
     def create_consumer
-      consumer = Struct.new do
+      consumer = Struct.new(:worker) do
         def subscribe(name, &block)
           start_mq_consumer(name, &block)
         end
-      end
-      consumer.new
-    end
 
-    def start_mq_consumer(name, &block)
-      @mq_consumer_thread = Thread.new do
-        begin
-          # simulate fake messages
-          messages = []
+        def start_mq_consumer(name, &block)
+          @mq_consumer_thread = Thread.new do
+            begin
+              # simulate fake messages
+              messages = []
 
-          10.times do |i|
-            messages << "test message #{i} for topic #{name}"
-          end
+              10.times do |i|
+                messages << "test message #{i} for topic #{name}"
+              end
 
-          messages.each do |message|
-            job = lambda do
-              yield message
+              messages.each do |message|
+                job = lambda do
+                  yield message
+                end
+
+                worker.push(job)
+              end
+              # or
+              #
+              # nsq_consumer = Nsq::Consumer.new(
+              #   nsqlookupd: ['127.0.0.1:4161'],
+              #   topic: @name,
+              #   channel: '...'
+              # )
+              # nsq_consumer.on_message do |message|
+              #   job = lambda do
+              #     yield message
+              #   end
+              #   @worker.push(job)
+              # end
+            rescue => e
+              # log error
+              puts "error consumer #{e.message}"
             end
-
-            @worker.push(job)
           end
-          # or
-          #
-          # nsq_consumer = Nsq::Consumer.new(
-          #   nsqlookupd: ['127.0.0.1:4161'],
-          #   topic: @name,
-          #   channel: '...'
-          # )
-          # nsq_consumer.on_message do |message|
-          #   @worker.push(&block)
-          # end
-        rescue => e
-          # log error
-          puts "error consumer #{e.message}"
         end
       end
+      consumer.new(@worker)
     end
   end
 
@@ -188,6 +192,14 @@ module MQ
       end
 
       @listeners.each(&:start)
+
+      stop = false
+      trap("INT")  { stop = true }
+      trap("TERM") { stop = true }
+
+      until stop
+        sleep 1
+      end
     end
 
     def shutdown
@@ -215,8 +227,26 @@ MQ::Application.consumer.draw do
   topic "hello", to: "HelloWorld"
 end
 
+
 begin
   MQ::Application.consumer.start
 rescue
   MQ::Application.consumer.shutdown
 end
+
+
+# example worker
+
+# worker = MQ::WorkerPool.new
+
+# worker.start
+
+# 10.times do |i|
+#   job = lambda do
+#     puts "hello world => #{i}"
+#   end
+#   worker.push(job)
+# end
+
+# until worker.jobs.all? { |t| !t.alive? }
+# end
