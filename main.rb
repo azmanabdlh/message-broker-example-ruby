@@ -25,11 +25,7 @@ module MQ
     private
     def resolve_consumer_class_name
       klass = @consumer.to_s.split('_').map(&:capitalize).join
-      unless klass.end_with?("Responder")
-        raise NameError, "Consumer class name '#{klass}' must end with 'Responder'"
-      end
-
-      klass
+      "#{klass}Responder"
     end
 
   end
@@ -234,7 +230,7 @@ module MQ
 end
 
 
-class HelloWorld
+class HelloWorldResponder
   def respond(message)
     puts "HelloWorld: #{message}"
   end
