@@ -1,6 +1,6 @@
 module MQ
   class Topic
-    attr_reader :name, :channel, :consumer
+    attr_reader :name, :channel
 
     def initialize(name, consumer)
       @name = name.to_s
@@ -11,6 +11,15 @@ module MQ
 
     def config(**options)
       @config.merge!(options)
+    end
+
+    def consumer
+      begin
+        @consumer = @consumer.to_s if @consumer.is_a?(Symbol)
+        ::Object.const_get(@consumer)
+      rescue
+        # log error
+      end
     end
 
   end
@@ -40,19 +49,17 @@ module MQ
       @route = NamedRouteCollection.new
     end
 
-    def topic(name, **option, &block)
-      consumer(option[:to]) if option.key?(:to)
-
-      if block_given?
-        instance_eval(&block)
-      end
-
-      @route.add(name, Topic.new(name, @consumer))
+    def middleware
+      # TODO: setup middleware
     end
 
-    def consumer(respond)
-      respond = respond.to_s if respond.is_a?(Symbol)
-      @consumer = ::Object.const_get(respond)
+    def topic(name, **option)
+      consumer = option[:to] if option.key?(:to)
+      raise ArgumentError, "missing required :to option for topic '#{name}'" if consumer.nil?
+
+      topic = Topic.new(name, consumer)
+
+      @route.add(name, topic)
     end
 
     def collection
