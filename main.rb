@@ -15,11 +15,21 @@ module MQ
 
     def consumer
       begin
-        @consumer = @consumer.to_s if @consumer.is_a?(Symbol)
-        ::Object.const_get(@consumer)
-      rescue
+        klass = resolve_consumer_class_name
+        ::Object.const_get(klass)
+      rescue NameError
         # log error
       end
+    end
+
+    private
+    def resolve_consumer_class_name
+      klass = @consumer.to_s.split('_').map(&:capitalize).join
+      unless klass.end_with?("Responder")
+        raise NameError, "Consumer class name '#{klass}' must end with 'Responder'"
+      end
+
+      klass
     end
 
   end
@@ -231,7 +241,7 @@ class HelloWorld
 end
 
 MQ::Application.consumer.draw do
-  topic "hello", to: "HelloWorld"
+  topic :hello, to: :hello_world
 end
 
 
