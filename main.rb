@@ -9,8 +9,9 @@ module MQ
       @config = {}
     end
 
-    def config(**options)
-      @config.merge!(options)
+    # @param args Consumer topic configuration
+    def config(args)
+      @config.merge!(args.to_h)
     end
 
     def consumer
@@ -124,21 +125,20 @@ module MQ
 
     def start
       @worker.start
-      consumer = create_consumer
-      return unless consumer.respond_to?(:subscribe)
 
-      consumer.subscribe(@name) do |message|
+      subscribe(@name) do |message|
         @route.each do |topic|
           klass = topic.consumer.new
           klass.respond(message)
         end
       end
+
     end
 
     def stop
       if @mq_consumer_thread&.alive?
-        @mq_consumer_thread.join
         @mq_consumer_thread.kill
+        @mq_consumer_thread.join
       end
       @mq_consumer_thread = nil
 
@@ -146,50 +146,45 @@ module MQ
     end
 
     private
-    def create_consumer
-      consumer = Struct.new(:worker) do
-        def subscribe(name, &block)
-          start_mq_consumer(name, &block)
-        end
+    def subscribe(name, &block)
+      start_mq_consumer(name, &block)
+    end
 
-        def start_mq_consumer(name, &block)
-          @mq_consumer_thread = Thread.new do
-            begin
-              # simulate fake messages
-              messages = []
+    def start_mq_consumer(name, &block)
+      @mq_consumer_thread = Thread.new do
+        begin
+          # simulate fake messages
+          messages = []
 
-              10.times do |i|
-                messages << "test message #{i} for topic #{name}"
-              end
-
-              messages.each do |message|
-                job = lambda do
-                  yield message
-                end
-
-                worker.push(job)
-              end
-              # or
-              #
-              # nsq_consumer = Nsq::Consumer.new(
-              #   nsqlookupd: ['127.0.0.1:4161'],
-              #   topic: @name,
-              #   channel: '...'
-              # )
-              # nsq_consumer.on_message do |message|
-              #   job = lambda do
-              #     yield message
-              #   end
-              #   @worker.push(job)
-              # end
-            rescue => e
-              # log error
-              puts "error consumer #{e.message}"
-            end
+          100.times do |i|
+            messages << "test message #{i} for topic #{name}"
           end
+
+          messages.each do |message|
+            job = lambda do
+              yield message
+            end
+
+            @worker.push(job)
+          end
+          # or
+          #
+          # nsq_consumer = Nsq::Consumer.new(
+          #   nsqlookupd: ['127.0.0.1:4161'],
+          #   topic: @name,
+          #   channel: '...'
+          # )
+          # nsq_consumer.on_message do |message|
+          #   job = lambda do
+          #     yield message
+          #   end
+          #   @worker.push(job)
+          # end
+        rescue => e
+          # log error
+          puts "error consumer #{e.message}"
         end
       end
-      consumer.new(@worker)
     end
   end
 
@@ -220,6 +215,31 @@ module MQ
     end
   end
 
+  class ConsumerTopicConfig
+
+    def max_flight(value)
+      puts "max_flight #{value}"
+    end
+
+    def max_attempt
+      puts "max_attempt"
+    end
+
+
+    def to_h
+      {}
+    end
+
+  end
+
+  class Responder
+    class << self
+      def config(&block)
+        ConsumerTopicConfig.new.instance_eval(&block)
+      end
+    end
+  end
+
   class Application
     class << self
       def consumer
@@ -230,14 +250,19 @@ module MQ
 end
 
 
-class HelloWorldResponder
+class WelcomeResponder < MQ::Responder
+  config do
+    max_flight 10
+  end
+
+
   def respond(message)
     puts "HelloWorld: #{message}"
   end
 end
 
 MQ::Application.consumer.draw do
-  topic :hello, to: :hello_world
+  topic :hello, to: :welcome
 end
 
 
