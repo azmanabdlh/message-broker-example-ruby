@@ -13,21 +13,19 @@ class HelloWorld
 end
 ```
 
-### 2. Register Topic and Consumer
+### 2. Route Topic
 ```ruby
-NSQ::Application.consumer.draw do
-  topic "hello" do
-    consumer "HelloWorld"
-  end
+MQ::Application.consumer.draw do
+  topic "hello", to: "HelloWorld"
 end
 ```
 
 ### 3. Start the Consumer
 ```ruby
 begin
-  NSQ::Application.consumer.start
+  MQ::Application.consumer.start
 rescue
-  NSQ::Application.consumer.shutdown
+  MQ::Application.consumer.shutdown
 end
 ```
 
@@ -40,11 +38,6 @@ test message 1 for topic hello
 test message 99 for topic hello
 ```
 
-## How It Works
-- The `Listener` class simulates receiving 100 messages for each topic.
-- Each message is passed to the registered consumer's `respond` method.
-- You can add more topics and consumer classes as needed.
-
 ## Requirements
 - Ruby 2.5+
 - No external gems required for the basic example
@@ -55,10 +48,6 @@ test message 99 for topic hello
    ```sh
    ruby main.rb
    ```
-
-## Customization
-- Add more topics and consumer classes to handle different message types.
-- Integrate with real async/message queue libraries for production use.
 
 ---
 Feel free to modify and extend for your own broker logic!
