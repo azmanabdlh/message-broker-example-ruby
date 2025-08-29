@@ -1,5 +1,4 @@
 module MQ
-
   class Topic
     attr_reader :name, :channel, :consumer
 
@@ -61,15 +60,61 @@ module MQ
     end
   end
 
+  class WorkerPool
+    attr_reader :jobs
+
+    def initialize(size: 3, max_queue_size: 1000)
+      @size = size
+      @max_queue_size = max_queue_size
+      @jobs = []
+      @queue = SizedQueue.new(max_queue_size)
+    end
+
+    def push(job)
+      @queue.push(job)
+    end
+
+    def create_job(worker_id)
+      Thread.new do
+        Thread.current.name = "worker-#{worker_id}"
+
+        loop do
+          job = @queue.pop
+          break if job == :stop
+          job.call
+        end
+      end
+    end
+
+    def start
+      @size.times do |id|
+        @jobs << create_job(id)
+      end
+    end
+
+    def stop
+      # send signal stop to worker
+      @size.times { @queue.push(:stop) }
+      # wait for all jobs to finish
+      @jobs.each(&:join)
+      @jobs.clear
+    end
+  end
+
   class Listener
     def initialize(name, route)
       @name = name
       @route = route
+      @mq_consumer_thread = nil
+      @worker = WorkerPool.new
     end
 
     def start
-      @consumer = create_consumer
-      @consumer.subscribe(@name) do | message |
+      @worker.start
+      consumer = create_consumer
+      return unless consumer.respond_to?(:subscribe)
+
+      consumer.subscribe(@name) do |message|
         @route.each do |topic|
           klass = topic.consumer.new
           klass.respond(message)
@@ -77,21 +122,57 @@ module MQ
       end
     end
 
+    def stop
+      if @mq_consumer_thread&.alive?
+        @mq_consumer_thread.join
+      end
+      @mq_consumer_thread = nil
+
+      @worker.stop
+    end
+
     private
     def create_consumer
       consumer = Struct.new do
         def subscribe(name, &block)
-          # Simulate receiving fake messages
-          messages = []
-          100.times do |i|
-            messages << "test message #{i} for topic #{name}"
-          end
-          messages.each do |msg|
-            block.call(msg)
-          end
+          start_mq_consumer(name, &block)
         end
       end
       consumer.new
+    end
+
+    def start_mq_consumer(name, &block)
+      @mq_consumer_thread = Thread.new do
+        begin
+          # simulate fake messages
+          messages = []
+
+          10.times do |i|
+            messages << "test message #{i} for topic #{name}"
+          end
+
+          messages.each do |message|
+            job = lambda do
+              yield message
+            end
+
+            @worker.push(job)
+          end
+          # or
+          #
+          # nsq_consumer = Nsq::Consumer.new(
+          #   nsqlookupd: ['127.0.0.1:4161'],
+          #   topic: @name,
+          #   channel: '...'
+          # )
+          # nsq_consumer.on_message do |message|
+          #   @worker.push(&block)
+          # end
+        rescue => e
+          # log error
+          puts "error consumer #{e.message}"
+        end
+      end
     end
   end
 
@@ -109,7 +190,9 @@ module MQ
       @listeners.each(&:start)
     end
 
-    def shutdown; end
+    def shutdown
+      @listeners.each(&:stop)
+    end
   end
 
   class Application
@@ -124,15 +207,12 @@ end
 
 class HelloWorld
   def respond(message)
-    puts message
+    puts "HelloWorld: #{message}"
   end
 end
 
 MQ::Application.consumer.draw do
-  # topic "", to: ""
-  topic "hello" do
-    consumer "HelloWorld"
-  end
+  topic "hello", to: "HelloWorld"
 end
 
 begin
