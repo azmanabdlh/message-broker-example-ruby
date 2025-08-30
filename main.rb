@@ -1,3 +1,5 @@
+require "yaml"
+
 module MQ
   class Topic
     attr_reader :name, :channel
@@ -6,6 +8,7 @@ module MQ
       @name = name.to_s
       @channel = ""
       @consumer = consumer
+      @config = {}
     end
 
     def consumer
@@ -16,6 +19,11 @@ module MQ
         # log error
       end
     end
+
+    def configure=(obj)
+      @config = obj
+    end
+
 
     private
     def resolve_consumer_class_name
@@ -63,7 +71,7 @@ module MQ
       @route.add(name, topic)
     end
 
-    def collection
+    def all
       @route.all
     end
   end
@@ -110,17 +118,14 @@ module MQ
   end
 
   class Listener
-    def initialize(topic_name, route)
-      @topic_name = topic_name
-      @route = route
+    # 'topics' is a list of Topic objects, each mapping a consumer to a topic name.
+    def initialize(config, name, topics)
       @mq_consumer_thread = nil
       @worker = WorkerPool.new
-    end
 
-    def start
+      # start listener
       @worker.start
-
-      subscribe(@topic_name)
+      subscribe(name, config, topics)
     end
 
     def stop
@@ -134,13 +139,13 @@ module MQ
     end
 
     private
-    def subscribe(topic_name)
-      @route.each do |topic|
-        start_mq_consumer(topic_name, topic)
+    def subscribe(name, config, topics)
+      topics.each do |topic|
+        start_mq_consumer(name, config, topic)
       end
     end
 
-    def start_mq_consumer(topic_name, topic)
+    def start_mq_consumer(name, config, topic)
       @mq_consumer_thread = Thread.new do
         begin
 
@@ -148,7 +153,7 @@ module MQ
           messages = []
 
           100.times do |i|
-            messages << "test message #{i} for topic #{topic_name}"
+            messages << "test message #{i} for topic #{name}"
           end
 
           messages.each do |message|
@@ -188,11 +193,10 @@ module MQ
     end
 
     def start
-      @listeners = @route.collection.map do |topic_name, route|
-        Listener.new(topic_name, route)
+      config = setup_configure
+      @listeners = @route.all.map do |name, topics|
+        Listener.new(config, name, topics)
       end
-
-      @listeners.each(&:start)
 
       stop = false
       trap("INT")  { stop = true }
@@ -206,9 +210,31 @@ module MQ
     def shutdown
       @listeners.each(&:stop)
     end
+
+    private
+    def setup_configure(path: "./mq.yaml")
+      config = Struct.new do
+        def initialize(path)
+          @config = YAML.load_file(path)
+        end
+        def find(topic_name)
+          default_setup unless @config.key?(topic_name)
+          @config[topic_name]
+        end
+
+        def default_setup
+          {}
+        end
+
+        def reload!
+          @config.reload!
+        end
+      end
+
+      config.new(path)
+    end
   end
 
-  class ResponderConfig; end
 
   class Application
     class << self
