@@ -119,10 +119,11 @@ module MQ
 
   class Listener
     # 'topics' is a list of Topic objects, each mapping a consumer to a topic name.
-    def initialize(config, name, topics)
+    def initialize(mq_config, name, topics)
       @mq_consumer_thread = nil
       @worker = WorkerPool.new
 
+      config = mq_config.find(name)
       # start listener
       @worker.start
       subscribe(name, config, topics)
@@ -140,48 +141,48 @@ module MQ
 
     private
     def subscribe(name, config, topics)
-      topics.each do |topic|
-        start_mq_consumer(name, config, topic)
+      @mq_consumer_thread = Thread.new do
+        # nsq_consumer = Nsq::Consumer.new(
+        #   nsqlookupd: ['127.0.0.1:4161'],
+        #   topic: name,
+        #   channel: '...'
+        #   max_in_flight: config["max_in_flight"]
+        # )
+        topics.each do |topic|
+          start_mq_consumer(name, topic)
+        end
       end
     end
 
-    def start_mq_consumer(name, config, topic)
-      @mq_consumer_thread = Thread.new do
-        begin
+    def start_mq_consumer(name, topic)
+      begin
 
-          # simulate fake messages
-          messages = []
+        # simulate fake messages
+        messages = []
 
-          100.times do |i|
-            messages << "test message #{i} for topic #{name}"
-          end
-
-          messages.each do |message|
-            job = lambda do
-              klass = topic.consumer
-              consumer = klass.new
-              consumer.respond(message)
-            end
-
-            @worker.push(job)
-          end
-          # or
-          #
-          # nsq_consumer = Nsq::Consumer.new(
-          #   nsqlookupd: ['127.0.0.1:4161'],
-          #   topic: @name,
-          #   channel: '...'
-          # )
-          # nsq_consumer.on_message do |message|
-          #   job = lambda do
-          #     yield message
-          #   end
-          #   @worker.push(job)
-          # end
-        rescue => e
-          # log error
-          puts "error consumer #{e.message}"
+        100.times do |i|
+          messages << "test message #{i} for topic #{name}"
         end
+
+        messages.each do |message|
+          job = lambda do
+            klass = topic.consumer
+            consumer = klass.new
+            consumer.respond(message)
+          end
+
+          @worker.push(job)
+        end
+
+        # nsq_consumer.on_message do |message|
+        #   job = lambda do
+        #     yield message
+        #   end
+        #   @worker.push(job)
+        # end
+      rescue => e
+        # log error
+        puts "error consumer #{e.message}"
       end
     end
   end
