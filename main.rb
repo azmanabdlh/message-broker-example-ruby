@@ -198,14 +198,6 @@ module MQ
       @listeners = @route.all.map do |name, topics|
         Listener.new(config, name, topics)
       end
-
-      stop = false
-      trap("INT")  { stop = true }
-      trap("TERM") { stop = true }
-
-      until stop
-        sleep 1
-      end
     end
 
     def shutdown
@@ -236,6 +228,27 @@ module MQ
     end
   end
 
+  class Server
+    class << self
+      def listen
+        begin
+          Application.consumer.start
+
+          stop = false
+          trap("INT")  { stop = true }
+          trap("TERM") { stop = true }
+
+          until stop
+            sleep 1
+          end
+        rescue
+          Application.consumer.shutdown
+        end
+      end
+    end
+
+  end
+
 
   class Application
     class << self
@@ -258,12 +271,7 @@ MQ::Application.consumer.draw do
 end
 
 
-begin
-  MQ::Application.consumer.start
-rescue
-  MQ::Application.consumer.shutdown
-end
-
+MQ::Server.listen
 
 # example worker
 
