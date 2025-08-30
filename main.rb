@@ -155,10 +155,7 @@ module MQ
             job = lambda do
               klass = topic.consumer
               consumer = klass.new
-
-              klass.define_method(:message) { message }
-
-              consumer.respond
+              consumer.respond(message)
             end
 
             @worker.push(job)
@@ -213,21 +210,6 @@ module MQ
 
   class ResponderConfig; end
 
-  class Responder
-    module ClassMethods
-      def configure(&block)
-        @config = ResponderConfig.new
-        @config.instance_eval(&block) if block_given?
-
-        @config.to_h
-      end
-    end
-
-    extend ClassMethods
-
-    def message; end
-  end
-
   class Application
     class << self
       def consumer
@@ -238,8 +220,8 @@ module MQ
 end
 
 
-class WelcomeResponder < MQ::Responder
-  def respond
+class WelcomeResponder
+  def respond(message)
     puts "HelloWorld: #{message}"
   end
 end
