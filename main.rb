@@ -6,12 +6,6 @@ module MQ
       @name = name.to_s
       @channel = ""
       @consumer = consumer
-      @config = {}
-    end
-
-    # @param args Consumer topic configuration
-    def config(args)
-      @config.merge!(args.to_h)
     end
 
     def consumer
@@ -116,8 +110,8 @@ module MQ
   end
 
   class Listener
-    def initialize(name, route)
-      @name = name
+    def initialize(topic_name, route)
+      @topic_name = topic_name
       @route = route
       @mq_consumer_thread = nil
       @worker = WorkerPool.new
@@ -126,13 +120,7 @@ module MQ
     def start
       @worker.start
 
-      subscribe(@name) do |message|
-        @route.each do |topic|
-          klass = topic.consumer.new
-          klass.respond(message)
-        end
-      end
-
+      subscribe(@topic_name)
     end
 
     def stop
@@ -146,23 +134,31 @@ module MQ
     end
 
     private
-    def subscribe(name, &block)
-      start_mq_consumer(name, &block)
+    def subscribe(topic_name)
+      @route.each do |topic|
+        start_mq_consumer(topic_name, topic)
+      end
     end
 
-    def start_mq_consumer(name, &block)
+    def start_mq_consumer(topic_name, topic)
       @mq_consumer_thread = Thread.new do
         begin
+
           # simulate fake messages
           messages = []
 
           100.times do |i|
-            messages << "test message #{i} for topic #{name}"
+            messages << "test message #{i} for topic #{topic_name}"
           end
 
           messages.each do |message|
             job = lambda do
-              yield message
+              klass = topic.consumer
+              consumer = klass.new
+
+              klass.define_method(:message) { message }
+
+              consumer.respond
             end
 
             @worker.push(job)
@@ -215,29 +211,21 @@ module MQ
     end
   end
 
-  class ConsumerTopicConfig
-
-    def max_flight(value)
-      puts "max_flight #{value}"
-    end
-
-    def max_attempt
-      puts "max_attempt"
-    end
-
-
-    def to_h
-      {}
-    end
-
-  end
+  class ResponderConfig; end
 
   class Responder
-    class << self
-      def config(&block)
-        ConsumerTopicConfig.new.instance_eval(&block)
+    module ClassMethods
+      def configure(&block)
+        @config = ResponderConfig.new
+        @config.instance_eval(&block) if block_given?
+
+        @config.to_h
       end
     end
+
+    extend ClassMethods
+
+    def message; end
   end
 
   class Application
@@ -251,12 +239,7 @@ end
 
 
 class WelcomeResponder < MQ::Responder
-  config do
-    max_flight 10
-  end
-
-
-  def respond(message)
+  def respond
     puts "HelloWorld: #{message}"
   end
 end
