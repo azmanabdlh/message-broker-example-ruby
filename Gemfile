@@ -2,6 +2,4 @@
 
 source "https://rubygems.org"
 
-# gem "rails"
-
-gem "async", "~> 2.28"
+gem "nsq-ruby", "~> 2.4"
