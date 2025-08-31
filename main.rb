@@ -4,16 +4,6 @@ require "nsq"
 
 module MQ
 
-  class ResponderConfig
-    def initialize(mq_config)
-      @mq_config = mq_config
-    end
-
-    def max_in_flight
-      @mq_config["max_in_flight"]
-    end
-  end
-
   class Topic
     attr_reader :name, :channel, :config
 
@@ -121,7 +111,7 @@ module MQ
         nsqlookupd: "127.0.0.1:4161",
         topic: topic.name,
         channel: topic.channel,
-        max_in_flight: topic.config.max_in_flight,
+        max_in_flight: topic.config["max_in_flight"],
       )
 
       # start listener
@@ -169,14 +159,15 @@ module MQ
         # end
         #
 
+        klass = topic.consumer
+        consumer = klass.new
+
         loop do
           raise "disconnected nsqd server" if @nsq_consumer.nil?
 
           msg = @nsq_consumer.pop_without_blocking
           next if msg.nil?
 
-          klass = topic.consumer
-          consumer = klass.new
 
           job = lambda do
             consumer.respond(msg)
@@ -223,9 +214,7 @@ module MQ
         end
         def find_by_name(name)
           default_setup unless @config.key?(name)
-          ResponderConfig.new(
-            @config[name]
-          )
+          @config[name]
         end
 
         def default_setup
@@ -277,7 +266,6 @@ end
 class WelcomeResponder
   def respond(msg)
     puts "HelloWorld: #{msg.body}"
-
     msg.finish
   end
 end

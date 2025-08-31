@@ -17,7 +17,7 @@ func main() {
 
 	topicName := "hello"
 
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 1000; i++ {
 		message := fmt.Sprintf("hello => %d", i)
 
 		log.Printf("sending message %d ... \n", i)
