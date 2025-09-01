@@ -1,12 +1,15 @@
 require "yaml"
 
-module MQ
-  class Topic
-    attr_reader :name, :channel
+require "nsq"
 
-    def initialize(name, consumer)
+module MQ
+
+  class Topic
+    attr_reader :name, :channel, :config
+
+    def initialize(name, channel, consumer)
       @name = name.to_s
-      @channel = ""
+      @channel = "test"
       @consumer = consumer
       @config = {}
     end
@@ -33,29 +36,12 @@ module MQ
 
   end
 
-
-  class NamedRouteCollection
-    def initialize
-      @routes = {}
-    end
-
-    def add(name, topic)
-      @routes[name.to_s] ||= []
-      @routes[name.to_s] << topic
-    end
-
-    def [](name)
-      @routes[name.to_s]
-    end
-
-    def all
-      @routes
-    end
-  end
-
   class RouteSet
+
+    attr_reader :topics
+
     def initialize
-      @route = NamedRouteCollection.new
+      @topics = []
     end
 
     def middleware
@@ -66,13 +52,11 @@ module MQ
       consumer = option[:to] if option.key?(:to)
       raise ArgumentError, "missing required :to option for topic '#{name}'" if consumer.nil?
 
-      topic = Topic.new(name, consumer)
+      channel = option[:channel] or "test"
 
-      @route.add(name, topic)
-    end
+      topic = Topic.new(name, channel, consumer)
 
-    def all
-      @route.all
+      @topics << topic
     end
   end
 
@@ -118,15 +102,21 @@ module MQ
   end
 
   class Listener
-    # 'topics' is a list of Topic objects, each mapping a consumer to a topic name.
-    def initialize(mq_config, name, topics)
+
+    def initialize(topic)
       @mq_consumer_thread = nil
       @worker = WorkerPool.new
 
-      config = mq_config.find(name)
+      @nsq_consumer = Nsq::Consumer.new(
+        nsqlookupd: "127.0.0.1:4161",
+        topic: topic.name,
+        channel: topic.channel,
+        max_in_flight: topic.config["max_in_flight"],
+      )
+
       # start listener
       @worker.start
-      subscribe(name, config, topics)
+      subscribe(topic)
     end
 
     def stop
@@ -137,49 +127,53 @@ module MQ
       @mq_consumer_thread = nil
 
       @worker.stop
+      @nsq_consumer.terminate
+      @nsq_consumer = nil
     end
 
     private
-    def subscribe(name, config, topics)
+    def subscribe(topic)
       @mq_consumer_thread = Thread.new do
-        # nsq_consumer = Nsq::Consumer.new(
-        #   nsqlookupd: ['127.0.0.1:4161'],
-        #   topic: name,
-        #   channel: '...'
-        #   max_in_flight: config["max_in_flight"]
-        # )
-        topics.each do |topic|
-          start_mq_consumer(name, topic)
-        end
+        start_mq_consumer(topic)
       end
     end
 
-    def start_mq_consumer(name, topic)
+    def start_mq_consumer(topic)
       begin
 
         # simulate fake messages
-        messages = []
+        # messages = []
 
-        100.times do |i|
-          messages << "test message #{i} for topic #{name}"
-        end
+        # 100.times do |i|
+        #   messages << "test message #{i} for topic #{topic.name}"
+        # end
 
-        messages.each do |message|
-          job = lambda do
-            klass = topic.consumer
-            consumer = klass.new
-            consumer.respond(message)
-          end
-
-          @worker.push(job)
-        end
-
-        # nsq_consumer.on_message do |message|
+        # messages.each do |message|
         #   job = lambda do
-        #     yield message
+        #     klass = topic.consumer
+        #     consumer = klass.new
+        #     consumer.respond(message)
         #   end
+
         #   @worker.push(job)
         # end
+        #
+
+        klass = topic.consumer
+        consumer = klass.new
+
+        loop do
+          raise "disconnected nsqd server" if @nsq_consumer.nil?
+
+          msg = @nsq_consumer.pop_without_blocking
+          next if msg.nil?
+
+
+          job = lambda do
+            consumer.respond(msg)
+          end
+          @worker.push(job)
+        end
       rescue => e
         # log error
         puts "error consumer #{e.message}"
@@ -188,19 +182,27 @@ module MQ
   end
 
   class Consumer
+
+    def initialize
+      @listeners = []
+    end
+
     def draw(&block)
       @route = RouteSet.new
       @route.instance_eval(&block)
     end
 
     def start
-      config = setup_configure
-      @listeners = @route.all.map do |name, topics|
-        Listener.new(config, name, topics)
+      mq_config = setup_configure
+      @listeners = @route.topics.map do |topic|
+        topic.configure = mq_config.find_by_name(topic.name)
+
+        Listener.new(topic)
       end
     end
 
     def shutdown
+      return if @listeners.empty?
       @listeners.each(&:stop)
     end
 
@@ -210,9 +212,9 @@ module MQ
         def initialize(path)
           @config = YAML.load_file(path)
         end
-        def find(topic_name)
-          default_setup unless @config.key?(topic_name)
-          @config[topic_name]
+        def find_by_name(name)
+          default_setup unless @config.key?(name)
+          @config[name]
         end
 
         def default_setup
@@ -241,7 +243,8 @@ module MQ
           until stop
             sleep 1
           end
-        rescue
+        rescue => e
+          puts "server error: #{e.message}"
           Application.consumer.shutdown
         end
       end
@@ -261,13 +264,14 @@ end
 
 
 class WelcomeResponder
-  def respond(message)
-    puts "HelloWorld: #{message}"
+  def respond(msg)
+    puts "HelloWorld: #{msg.body}"
+    msg.finish
   end
 end
 
 MQ::Application.consumer.draw do
-  topic :hello, to: :welcome
+  topic :hello, channel: "test", to: :welcome
 end
 
 
